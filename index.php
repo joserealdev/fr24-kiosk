@@ -42,11 +42,11 @@ $error   = $result['error'] ?? ($result === null ? 'Wait for API...' : null);
       .route {
         color: #fff;
         font-weight: bold;
-        font-size: 16px;
+        font-size: 24px;
       }
       .airline {
         color: #888;
-        font-size: 12px;
+        font-size: 18px;
       }
 
     </style>
@@ -63,7 +63,7 @@ $error   = $result['error'] ?? ($result === null ? 'Wait for API...' : null);
           <div class="flight-row">
             <div>
               <div class="route"><?= htmlspecialchars($f['origin']) ?> ➔ <?= htmlspecialchars($f['destination']) ?></div>
-              <div class="airline"><?= htmlspecialchars($f['airline']) ?> · <?= htmlspecialchars($f['callsign']) ?><?= !empty($f['registration']) ? ' · ' . htmlspecialchars($f['registration']) : '' ?></div>
+              <div class="airline"><?= htmlspecialchars($f['airline']) ?> · <?= htmlspecialchars($f['callsign']) ?><?= !empty($f['registration']) ? ' · ' . htmlspecialchars($f['registration']) : '' ?><?= !empty($f['model']) ? ' · ' . htmlspecialchars($f['model']) : '' ?></div>
             </div>
           </div>
         <?php endforeach; ?>
