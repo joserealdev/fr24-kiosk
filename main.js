@@ -52,18 +52,7 @@ async function getPage() {
   if (!browser || !browser.connected) {
     browser = await puppeteer.launch({
       headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-gpu",
-        "--disable-dev-shm-usage",
-        "--disable-extensions",
-        "--disable-background-networking",
-        "--disable-sync",
-        "--no-first-run",
-        "--single-process",
-        "--js-flags=--max-old-space-size=128",
-      ],
+      args: ["--no-sandbox"],
       executablePath: "/usr/bin/chromium-browser",
     });
     sharedPage = null;
@@ -74,15 +63,6 @@ async function getPage() {
     await sharedPage.setUserAgent(
       "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
     );
-    await sharedPage.setRequestInterception(true);
-    sharedPage.on("request", (req) => {
-      const type = req.resourceType();
-      if (["image", "font", "stylesheet", "media"].includes(type)) {
-        req.abort();
-      } else {
-        req.continue();
-      }
-    });
   }
   return sharedPage;
 }
@@ -122,39 +102,39 @@ async function lookupCallsign(callsign) {
   try {
     const page = await getPage();
 
-    const url = `https://www.flightradar24.com/${encodeURIComponent(callsign)}`;
+    const url = `https://es.flightaware.com/live/flight/${encodeURIComponent(callsign)}`;
     await page.goto(url, { waitUntil: "networkidle2", timeout: 15000 });
 
-    // Wait for the panel to appear
+    // Dismiss cookie consent banner
+    await page.click("#onetrust-accept-btn-handler").catch(() => {});
+
+    // Wait for the flight summary to appear
     await page
-      .waitForSelector('[data-testid="aircraft-small-panel__airline-name"]', {
-        timeout: 10000,
-      })
+      .waitForSelector(".flightPageSummaryBlock", { timeout: 10000 })
       .catch(() => {});
 
-    const selectors = {
-      airline: '[data-testid="aircraft-small-panel__airline-name"]',
-      origin: '[data-testid="aircraft-small-panel__departure-iata"]',
-      destination: '[data-testid="aircraft-small-panel__arrival-iata"]',
-      registration: '[data-testid="aircraft-small-panel__registration"]',
-      model: '[data-testid="aircraft-small-panel__model"]',
-    };
-
-    const info = await page.evaluate((sel) => {
+    const info = await page.evaluate(() => {
       const text = (s) => document.querySelector(s)?.textContent?.trim() || "";
-      return {
-        airline: text(sel.airline),
-        origin: text(sel.origin),
-        destination: text(sel.destination),
-        registration: text(sel.registration),
-        model: text(sel.model),
-      };
-    }, selectors);
+      const attr = (s, a) => document.querySelector(s)?.getAttribute(a) || "";
+
+      const airline = text(
+        'div[data-template="live/flight/airline"] .flightPageData a[target="blank"]',
+      );
+      const origin = text(
+        ".flightPageSummaryOrigin .flightPageSummaryAirportCode",
+      );
+      const destination = text(
+        ".flightPageSummaryDestination .flightPageSummaryAirportCode",
+      );
+      const model = attr('meta[name="aircrafttype"]', "content");
+
+      return { airline, origin, destination, model };
+    });
 
     const result = {
       callsign,
       airline: info.airline || callsign,
-      registration: info.registration || "",
+      registration: "",
       model: info.model || "",
       origin: info.origin || "???",
       destination: info.destination || "???",
