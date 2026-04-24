@@ -12,6 +12,6 @@
   "dependencies": {
     "better-sqlite3": "^12.9.0",
     "express": "^5.2.1",
-    "puppeteer": "^24.42.0"
+    "flightradarapi": "^1.4.0"
   }
 }

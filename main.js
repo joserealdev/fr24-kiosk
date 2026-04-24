@@ -1,13 +1,15 @@
 const express = require("express");
 const Database = require("better-sqlite3");
 const http = require("http");
-const puppeteer = require("puppeteer");
+const { FlightRadar24API } = require("flightradarapi");
+const frApi = new FlightRadar24API();
 
 const app = express();
 const PORT = 7000;
 const FR24_URL = "http://localhost:8754/flights.json";
 const POLL_INTERVAL = 15_000;
 const CACHE_MAX_AGE = 3600_000; // 1 hour
+const LOOKUP_CONCURRENCY = 3;
 
 // ── SQLite setup ────────────────────────────────────────────────────────────
 const db = new Database("flights.db");
@@ -44,29 +46,6 @@ const selectStmt = db.prepare(
 let currentFlights = [];
 let lastError = null;
 
-// ── Puppeteer browser instance (single page, reused) ───────────────────────
-let browser = null;
-let sharedPage = null;
-
-async function getPage() {
-  if (!browser || !browser.connected) {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox"],
-      executablePath: "/usr/bin/chromium-browser",
-    });
-    sharedPage = null;
-  }
-  if (!sharedPage || sharedPage.isClosed()) {
-    sharedPage = await browser.newPage();
-    await sharedPage.setViewport({ width: 390, height: 844 });
-    await sharedPage.setUserAgent(
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
-    );
-  }
-  return sharedPage;
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function httpGetJson(url) {
   return new Promise((resolve, reject) => {
@@ -98,46 +77,23 @@ function getCached(callsign) {
   return row;
 }
 
-async function lookupCallsign(callsign) {
+async function lookupFlight(flightId, callsign) {
   try {
-    const page = await getPage();
+    const flight = await frApi.getFlightDetails({ id: flightId });
 
-    const url = `https://es.flightaware.com/live/flight/${encodeURIComponent(callsign)}`;
-    await page.goto(url, { waitUntil: "networkidle2", timeout: 15000 });
-
-    // Dismiss cookie consent banner
-    await page.click("#onetrust-accept-btn-handler").catch(() => {});
-
-    // Wait for the flight summary to appear
-    await page
-      .waitForSelector(".flightPageSummaryBlock", { timeout: 10000 })
-      .catch(() => {});
-
-    const info = await page.evaluate(() => {
-      const text = (s) => document.querySelector(s)?.textContent?.trim() || "";
-      const attr = (s, a) => document.querySelector(s)?.getAttribute(a) || "";
-
-      const airline = text(
-        'div[data-template="live/flight/airline"] .flightPageData a[target="blank"]',
-      );
-      const origin = text(
-        ".flightPageSummaryOrigin .flightPageSummaryAirportCode",
-      );
-      const destination = text(
-        ".flightPageSummaryDestination .flightPageSummaryAirportCode",
-      );
-      const model = attr('meta[name="aircrafttype"]', "content");
-
-      return { airline, origin, destination, model };
-    });
+    const airline = flight?.airline?.name || callsign;
+    const registration = flight?.aircraft?.registration || "";
+    const model = flight?.aircraft?.model?.code || "";
+    const origin = flight?.airport?.origin?.code?.iata || "???";
+    const destination = flight?.airport?.destination?.code?.iata || "???";
 
     const result = {
       callsign,
-      airline: info.airline || callsign,
-      registration: "",
-      model: info.model || "",
-      origin: info.origin || "???",
-      destination: info.destination || "???",
+      airline,
+      registration,
+      model,
+      origin,
+      destination,
     };
 
     upsertStmt.run(
@@ -151,7 +107,10 @@ async function lookupCallsign(callsign) {
     );
     return result;
   } catch (err) {
-    console.error(`Puppeteer lookup failed for ${callsign}:`, err.message);
+    console.error(
+      `FR24 API lookup failed for ${callsign} (${flightId}):`,
+      err.message,
+    );
     return {
       callsign,
       airline: callsign,
@@ -196,21 +155,19 @@ async function poll() {
           destination: info.destination,
         });
       } else {
-        pending.push(callsign);
+        pending.push({ flightId: key, callsign });
       }
     }
 
-    // Look up uncached callsigns sequentially (single page, RPi-friendly)
-    for (const cs of pending) {
-      const resolved = await lookupCallsign(cs);
-      flights.push({
-        callsign: cs,
-        airline: resolved.airline,
-        registration: resolved.registration,
-        model: resolved.model,
-        origin: resolved.origin,
-        destination: resolved.destination,
-      });
+    // Look up uncached flights in small batches
+    for (let i = 0; i < pending.length; i += LOOKUP_CONCURRENCY) {
+      const batch = pending.slice(i, i + LOOKUP_CONCURRENCY);
+      const results = await Promise.all(
+        batch.map(({ flightId, callsign: cs }) => lookupFlight(flightId, cs)),
+      );
+      for (const resolved of results) {
+        flights.push(resolved);
+      }
     }
 
     currentFlights = flights;
