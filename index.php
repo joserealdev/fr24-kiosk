@@ -51,21 +51,41 @@ $error   = $result['error'] ?? ($result === null ? 'Wait for API...' : null);
       .airline-logo {
         height: 36px;
         width: auto;
-        margin-right: 12px;
+        max-width: 15%;
+        object-fit: contain;
+        margin-left: 12px;
         align-self: center;
+        background-color: #fff;
+      }
+
+      @keyframes scrollUp {
+        0%   { transform: translateY(0); }
+        100% { transform: translateY(-50%); }
+      }
+      .scroll-wrap {
+        overflow: hidden;
+      }
+      .scroll-inner.scrolling {
+        animation: scrollUp var(--scroll-duration, 10s) linear infinite;
       }
 
     </style>
   </head>
   <body>
     <h2>LIVE FEED</h2>
-    <div id="container">
+    <div id="container" class="scroll-wrap">
       <?php if ($error): ?>
         <div style="color:#666"><?= htmlspecialchars($error) ?></div>
       <?php elseif (empty($flights)): ?>
         <div style="color:#666">Searching skies...</div>
       <?php else: ?>
-        <?php foreach ($flights as $f): ?>
+        <div class="scroll-inner <?= count($flights) > 4 ? 'scrolling' : '' ?>" id="scrollInner">
+        <?php
+          // Duplicate rows for seamless looping when scrolling
+          $rows = $flights;
+          if (count($flights) > 4) $rows = array_merge($flights, $flights);
+        ?>
+        <?php foreach ($rows as $f): ?>
           <div class="flight-row">
             <div>
               <div class="route"><?= htmlspecialchars($f['origin']) ?> ➔ <?= htmlspecialchars($f['destination']) ?></div>
@@ -76,7 +96,17 @@ $error   = $result['error'] ?? ($result === null ? 'Wait for API...' : null);
             <?php endif; ?>
           </div>
         <?php endforeach; ?>
+        </div>
       <?php endif; ?>
     </div>
+    <?php if (!$error && count($flights) > 4): ?>
+    <script>
+      // Set scroll duration based on number of flights (~3s per flight)
+      const count = <?= count($flights) ?>;
+      document.getElementById('scrollInner').style.setProperty(
+        '--scroll-duration', (count * 3) + 's'
+      );
+    </script>
+    <?php endif; ?>
   </body>
 </html>
