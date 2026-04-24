@@ -7,7 +7,7 @@ const frApi = new FlightRadar24API();
 
 const app = express();
 const PORT = 7000;
-const FR24_URL = "http://192.168.1.160:8754/flights.json";
+const FR24_URL = `http://${process.env.FR24_HOST}/flights.json`;
 const POLL_INTERVAL = 15_000;
 
 // ── SQLite setup ────────────────────────────────────────────────────────────
