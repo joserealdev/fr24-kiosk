@@ -48,6 +48,12 @@ $error   = $result['error'] ?? ($result === null ? 'Wait for API...' : null);
         color: #888;
         font-size: 18px;
       }
+      .airline-logo {
+        height: 36px;
+        width: auto;
+        margin-right: 12px;
+        align-self: center;
+      }
 
     </style>
   </head>
@@ -65,6 +71,9 @@ $error   = $result['error'] ?? ($result === null ? 'Wait for API...' : null);
               <div class="route"><?= htmlspecialchars($f['origin']) ?> ➔ <?= htmlspecialchars($f['destination']) ?></div>
               <div class="airline"><?= htmlspecialchars($f['airline']) ?> · <?= htmlspecialchars($f['callsign']) ?><?= !empty($f['registration']) ? ' · ' . htmlspecialchars($f['registration']) : '' ?><?= !empty($f['model']) ? ' · ' . htmlspecialchars($f['model']) : '' ?></div>
             </div>
+            <?php if (!empty($f['logo'])): ?>
+              <img src="<?= htmlspecialchars($f['logo']) ?>" alt="" class="airline-logo" />
+            <?php endif; ?>
           </div>
         <?php endforeach; ?>
       <?php endif; ?>

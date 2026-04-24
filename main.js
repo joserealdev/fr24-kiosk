@@ -41,6 +41,9 @@ const upsertStmt = db.prepare(`
 let currentFlights = [];
 let lastError = null;
 
+// ── In-memory logo cache: airlineKey → { dataUri, ext } ─────────────────────
+const logoCache = new Map();
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function httpGetJson(url) {
   return new Promise((resolve, reject) => {
@@ -80,7 +83,7 @@ async function poll() {
     // Collect feeder flight keys (ICAO 24-bit hex codes)
     const feederKeys = new Set();
     for (const key of Object.keys(data)) {
-      feederKeys.add(key.toUpperCase());
+      if (key && key.length > 0) feederKeys.add(key.toUpperCase());
     }
 
     if (feederKeys.size === 0) {
@@ -107,6 +110,35 @@ async function poll() {
     for (const key of feederKeys) {
       const match = apiMap.get(key);
       if (match) {
+        // Build a cache key from airline codes
+        const logoKey = (
+          match.airlineIcao ||
+          match.airlineIata ||
+          ""
+        ).toUpperCase();
+        let logoDataUri = null;
+
+        if (logoKey) {
+          if (logoCache.has(logoKey)) {
+            logoDataUri = logoCache.get(logoKey);
+          } else {
+            try {
+              const logoResult = await frApi.getAirlineLogo(
+                match.airlineIata,
+                match.airlineIcao,
+              );
+              if (logoResult && logoResult[0]) {
+                const buf = Buffer.from(logoResult[0]);
+                const ext = logoResult[1] || "png";
+                logoDataUri = `data:image/${ext};base64,${buf.toString("base64")}`;
+              }
+            } catch (e) {
+              // logo fetch failed, leave null
+            }
+            logoCache.set(logoKey, logoDataUri);
+          }
+        }
+
         const flight = {
           callsign: match.callsign || key,
           airline:
@@ -115,6 +147,7 @@ async function poll() {
           model: match.aircraftCode || "",
           origin: match.originAirportIata || "???",
           destination: match.destinationAirportIata || "???",
+          logo: logoDataUri,
         };
         flights.push(flight);
         upsertStmt.run(
