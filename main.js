@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const Database = require("better-sqlite3");
 const http = require("http");
@@ -6,10 +7,8 @@ const frApi = new FlightRadar24API();
 
 const app = express();
 const PORT = 7000;
-const FR24_URL = "http://localhost:8754/flights.json";
+const FR24_URL = "http://192.168.1.160:8754/flights.json";
 const POLL_INTERVAL = 15_000;
-const CACHE_MAX_AGE = 3600_000; // 1 hour
-const LOOKUP_CONCURRENCY = 3;
 
 // ── SQLite setup ────────────────────────────────────────────────────────────
 const db = new Database("flights.db");
@@ -37,10 +36,6 @@ const upsertStmt = db.prepare(`
     destination  = excluded.destination,
     fetched_at   = excluded.fetched_at
 `);
-
-const selectStmt = db.prepare(
-  "SELECT * FROM callsign_cache WHERE callsign = ?",
-);
 
 // ── In-memory state: the latest enriched flight list ────────────────────────
 let currentFlights = [];
@@ -70,58 +65,6 @@ function httpGetJson(url) {
   });
 }
 
-function getCached(callsign) {
-  const row = selectStmt.get(callsign);
-  if (!row) return null;
-  if (Date.now() - row.fetched_at > CACHE_MAX_AGE) return null;
-  return row;
-}
-
-async function lookupFlight(flightId, callsign) {
-  try {
-    const flight = await frApi.getFlightDetails({ id: flightId });
-
-    const airline = flight?.airline?.name || callsign;
-    const registration = flight?.aircraft?.registration || "";
-    const model = flight?.aircraft?.model?.code || "";
-    const origin = flight?.airport?.origin?.code?.iata || "???";
-    const destination = flight?.airport?.destination?.code?.iata || "???";
-
-    const result = {
-      callsign,
-      airline,
-      registration,
-      model,
-      origin,
-      destination,
-    };
-
-    upsertStmt.run(
-      result.callsign,
-      result.airline,
-      result.registration,
-      result.model,
-      result.origin,
-      result.destination,
-      Date.now(),
-    );
-    return result;
-  } catch (err) {
-    console.error(
-      `FR24 API lookup failed for ${callsign} (${flightId}):`,
-      err.message,
-    );
-    return {
-      callsign,
-      airline: callsign,
-      registration: "",
-      model: "",
-      origin: "???",
-      destination: "???",
-    };
-  }
-}
-
 // ── Polling loop ────────────────────────────────────────────────────────────
 async function poll() {
   try {
@@ -133,40 +76,56 @@ async function poll() {
     }
 
     lastError = null;
-    const flights = [];
 
-    const pending = [];
-
-    for (const [key, value] of Object.entries(data)) {
-      if (key === "full_count" || key === "version") continue;
-      if (!Array.isArray(value) || value.length === 0) continue;
-
-      const callsign = value[value.length - 1];
-      if (!callsign || typeof callsign !== "string") continue;
-
-      const info = getCached(callsign);
-      if (info) {
-        flights.push({
-          callsign,
-          airline: info.airline,
-          registration: info.registration,
-          model: info.model,
-          origin: info.origin,
-          destination: info.destination,
-        });
-      } else {
-        pending.push({ flightId: key, callsign });
-      }
+    // Collect feeder flight keys (ICAO 24-bit hex codes)
+    const feederKeys = new Set();
+    for (const key of Object.keys(data)) {
+      feederKeys.add(key.toUpperCase());
     }
 
-    // Look up uncached flights in small batches
-    for (let i = 0; i < pending.length; i += LOOKUP_CONCURRENCY) {
-      const batch = pending.slice(i, i + LOOKUP_CONCURRENCY);
-      const results = await Promise.all(
-        batch.map(({ flightId, callsign: cs }) => lookupFlight(flightId, cs)),
-      );
-      for (const resolved of results) {
-        flights.push(resolved);
+    if (feederKeys.size === 0) {
+      currentFlights = [];
+      return;
+    }
+
+    // Fetch all flights in the area from FR24 API
+    const bounds = await frApi.getBoundsByPoint(
+      parseFloat(process.env.LAT),
+      parseFloat(process.env.LNG),
+      100_000,
+    );
+    const apiFlights = await frApi.getFlights(null, bounds);
+
+    // Build lookup: icao24bit → flight data
+    const apiMap = new Map();
+    for (const f of apiFlights) {
+      if (f.icao24bit) apiMap.set(f.icao24bit.toUpperCase(), f);
+    }
+
+    // Match feeder flights with API data
+    const flights = [];
+    for (const key of feederKeys) {
+      const match = apiMap.get(key);
+      if (match) {
+        const flight = {
+          callsign: match.callsign || key,
+          airline:
+            match.airlineIcao || match.airlineIata || match.callsign || key,
+          registration: match.registration || "",
+          model: match.aircraftCode || "",
+          origin: match.originAirportIata || "???",
+          destination: match.destinationAirportIata || "???",
+        };
+        flights.push(flight);
+        upsertStmt.run(
+          flight.callsign,
+          flight.airline,
+          flight.registration,
+          flight.model,
+          flight.origin,
+          flight.destination,
+          Date.now(),
+        );
       }
     }
 
