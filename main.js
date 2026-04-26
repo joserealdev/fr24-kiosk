@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const Database = require("better-sqlite3");
 const http = require("http");
+const { execSync } = require("child_process");
 const { FlightRadar24API } = require("flightradarapi");
 const frApi = new FlightRadar24API();
 
@@ -44,6 +45,19 @@ let lastError = null;
 // ── In-memory logo cache: airlineKey → { dataUri, ext } ─────────────────────
 const logoCache = new Map();
 
+// ── Screen power control (GPIO 18 backlight – tft35a) ───────────────────────
+let screenOn = true;
+function setScreen(on) {
+  if (on === screenOn) return;
+  screenOn = on;
+  try {
+    execSync(`DISPLAY=:0 xset dpms force ${on ? "on" : "off"}`);
+    console.log(`Screen ${on ? "ON" : "OFF"}`);
+  } catch (e) {
+    console.error("Screen control error:", e.message);
+  }
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function httpGetJson(url) {
   return new Promise((resolve, reject) => {
@@ -75,6 +89,7 @@ async function poll() {
     if (!data) {
       lastError = "Wait for FR24...";
       currentFlights = [];
+      setScreen(false);
       return;
     }
 
@@ -88,6 +103,7 @@ async function poll() {
 
     if (feederKeys.size === 0) {
       currentFlights = [];
+      setScreen(false);
       return;
     }
 
@@ -163,6 +179,7 @@ async function poll() {
     }
 
     currentFlights = flights;
+    setScreen(currentFlights.length > 0);
   } catch (err) {
     console.error("Poll error:", err.message);
   }
@@ -174,6 +191,16 @@ app.get("/api/flights", (_req, res) => {
     return res.json({ error: lastError, flights: [] });
   }
   res.json({ error: null, flights: currentFlights });
+});
+
+app.get("/api/screen-on", (_req, res) => {
+  setScreen(true);
+  res.json({ error: null, ok: true });
+});
+
+app.get("/api/screen-off", (_req, res) => {
+  setScreen(false);
+  res.json({ error: null, ok: true });
 });
 
 // ── Start ───────────────────────────────────────────────────────────────────

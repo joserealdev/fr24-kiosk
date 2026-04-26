@@ -53,8 +53,7 @@ $error   = $result['error'] ?? ($result === null ? 'Wait for API...' : null);
         width: auto;
         max-width: 15%;
         object-fit: contain;
-        margin-left: 12px;
-        align-self: center;
+        margin-right: 30px;
         background-color: #fff;
       }
 
