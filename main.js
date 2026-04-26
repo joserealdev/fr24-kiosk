@@ -58,6 +58,12 @@ function setScreen(on) {
   }
 }
 
+// ── Night-time check (screen off 23:00–08:00) ──────────────────────────────
+function isNightTime() {
+  const h = new Date().getHours();
+  return h >= 23 || h < 8;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function httpGetJson(url) {
   return new Promise((resolve, reject) => {
@@ -105,6 +111,10 @@ async function poll() {
       currentFlights = [];
       setScreen(false);
       return;
+    }
+
+    if (isNightTime()) {
+      setScreen(false);
     }
 
     // Fetch all flights in the area from FR24 API
@@ -179,7 +189,7 @@ async function poll() {
     }
 
     currentFlights = flights;
-    setScreen(currentFlights.length > 0);
+    setScreen(currentFlights.length > 0 && !isNightTime());
   } catch (err) {
     console.error("Poll error:", err.message);
   }
