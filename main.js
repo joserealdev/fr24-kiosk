@@ -46,13 +46,22 @@ let lastError = null;
 const logoCache = new Map();
 
 // ── Screen power control (GPIO 18 backlight – tft35a) ───────────────────────
-let screenOn = true;
+let screenOn = null;
 function setScreen(on) {
-  if (on === screenOn) return;
+  const changed = on !== screenOn;
   screenOn = on;
   try {
-    execSync(`DISPLAY=:0 xset dpms force ${on ? "on" : "off"}`);
-    console.log(`Screen ${on ? "ON" : "OFF"}`);
+    if (on) {
+      execSync("DISPLAY=:0 xset s off -dpms");
+      if (changed) {
+        execSync("DISPLAY=:0 xset dpms force on");
+      }
+    } else {
+      if (changed) {
+        execSync("DISPLAY=:0 xset s on +dpms");
+        execSync("DISPLAY=:0 xset dpms force off");
+      }
+    }
   } catch (e) {
     console.error("Screen control error:", e.message);
   }
